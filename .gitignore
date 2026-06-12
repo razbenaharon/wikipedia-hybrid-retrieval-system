@@ -1,0 +1,18 @@
+# ---- Python cache ----
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---- Heavy Wikipedia corpus: 27,074 JSON files — NEVER track (will brick the push) ----
+data/Wikipedia Entries/
+
+# ---- Virtual environments ----
+.venv/
+venv/
+env/
+
+# ---- OS / IDE noise ----
+.DS_Store
+.idea/
+.vscode/
