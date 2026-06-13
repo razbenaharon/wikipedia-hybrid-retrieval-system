@@ -9,17 +9,18 @@ from typing import List, Optional
 import numpy as np
 
 from embed import embed_queries
-from index import load_index, load_lexical_artifacts, load_meta
+from index import POPULARITY_SCORES_NAME, load_index, load_lexical_artifacts, load_meta
 from utils import ARTIFACTS_DIR, K_EVAL, tokenize_text
 
 SEMANTIC_CANDIDATES = 800
 LEXICAL_CANDIDATES = 800
-BM25_K1 = 1.80
+BM25_K1 = 1.50
 BM25_B = 0.90
+FUSION_SEMANTIC = 0.50
 FUSION_LEXICAL = 0.35
-FUSION_SEMANTIC = 0.55
 FUSION_COVERAGE = 0.10
 FUSION_TITLE = 0.00
+FUSION_POPULARITY = 0.05
 
 
 @dataclass
@@ -33,6 +34,7 @@ class RetrievalArtifacts:
     post_tfs: np.ndarray
     doc_lengths: np.ndarray
     avg_doc_length: float
+    popularity_scores: np.ndarray
 
 
 _ARTIFACT_CACHE: RetrievalArtifacts | None = None
@@ -108,6 +110,7 @@ def _get_artifacts(artifacts_dir: Optional[Path]) -> RetrievalArtifacts:
     meta = load_meta(root)
     titles = [str(title) for title in meta.get("titles", [""] * len(page_ids))]
     lexical = load_lexical_artifacts(root)
+    popularity_scores = _load_popularity_scores(root, meta, len(page_ids))
     _ARTIFACT_CACHE = RetrievalArtifacts(
         root=root,
         vectors=vectors,
@@ -118,8 +121,21 @@ def _get_artifacts(artifacts_dir: Optional[Path]) -> RetrievalArtifacts:
         post_tfs=lexical.post_tfs,
         doc_lengths=lexical.doc_lengths.astype(np.float32, copy=False),
         avg_doc_length=lexical.avg_doc_length,
+        popularity_scores=popularity_scores,
     )
     return _ARTIFACT_CACHE
+
+
+def _load_popularity_scores(root: Path, meta: dict, expected_len: int) -> np.ndarray:
+    popularity_meta = meta.get("popularity", {})
+    scores_path = root / popularity_meta.get("scores", POPULARITY_SCORES_NAME)
+    if not scores_path.exists():
+        return np.zeros(expected_len, dtype=np.float32)
+
+    scores = np.load(scores_path).astype(np.float32, copy=False)
+    if scores.shape != (expected_len,):
+        return np.zeros(expected_len, dtype=np.float32)
+    return scores
 
 
 def _lexical_scores(
@@ -199,11 +215,13 @@ def _rank_candidates(
     lexical_part = lexical_scores[candidate_ids]
     coverage_part = coverage_scores[candidate_ids]
     title_part = _title_bonus(query, candidate_ids, artifacts)
+    popularity_part = artifacts.popularity_scores[candidate_ids]
     combined = (
         FUSION_LEXICAL * lexical_part
         + FUSION_SEMANTIC * semantic_part
         + FUSION_COVERAGE * coverage_part
         + FUSION_TITLE * title_part
+        + FUSION_POPULARITY * popularity_part
     )
     order = np.argsort(-combined, kind="mergesort")
 
@@ -249,10 +267,21 @@ def _title_bonus(
     if not query_terms:
         return np.zeros(len(candidate_ids), dtype=np.float32)
 
+    query_idfs = {
+        token: artifacts.lexicon[token][2]
+        for token in query_terms
+        if token in artifacts.lexicon
+    }
+    total_idf = float(sum(query_idfs.values()))
+    if total_idf <= 0.0:
+        return np.zeros(len(candidate_ids), dtype=np.float32)
+
     bonuses = np.zeros(len(candidate_ids), dtype=np.float32)
-    denom = float(len(query_terms))
     for i, doc_idx in enumerate(candidate_ids):
         title_terms = artifacts.title_token_sets[int(doc_idx)]
         if title_terms:
-            bonuses[i] = len(query_terms & title_terms) / denom
+            overlap_idf = sum(
+                idf for token, idf in query_idfs.items() if token in title_terms
+            )
+            bonuses[i] = min(1.0, overlap_idf / total_idf)
     return bonuses

@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List
+from typing import Any, Dict, Iterator, List
 
 STUDENT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = STUDENT_ROOT / "data"

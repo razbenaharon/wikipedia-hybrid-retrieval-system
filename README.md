@@ -1,14 +1,16 @@
-# Section B — Retrieval pipeline
+# Section B Hybrid Wikipedia Retrieval
 
-This project implements a hybrid Wikipedia page retriever for the Section B
-autograder. The public entry point is unchanged:
+**Video Presentation Link: TODO**
+
+This repository contains the finalized Section B retrieval system. The public
+entry point remains:
 
 ```python
 run(queries: list[str]) -> list[list[int]]
 ```
 
-For each query, the system returns ranked `page_id` values. Only the first 10
-IDs are scored.
+For each query, the system returns ranked Wikipedia `page_id` values. The first
+10 results are scored by mean NDCG@10.
 
 ## Setup
 
@@ -17,32 +19,66 @@ cd "Section B"
 pip install -r requirements.txt
 ```
 
-Corpus lives at **`data/Wikipedia Entries/`** (included in the handout).
+The Wikipedia corpus is expected at `data/Wikipedia Entries/`. The repository
+also includes prebuilt retrieval artifacts under `artifacts/`, so evaluation can
+run without rebuilding the index.
 
-## Retrieval approach
+## How To Run
 
-The retriever combines two signals:
+Run the public evaluation:
 
-- semantic similarity from `sentence-transformers/all-MiniLM-L6-v2` over full
-  page title/content text
-- BM25-style lexical matching over alphanumeric tokens, including numbers and
-  simple suffix variants
-- selected phrase tokens for high-value clue pairs such as roles, locations,
-  research terms, and artifact/transport phrases
+```bash
+python scripts/eval_public.py
+```
 
-The query-time code loads prebuilt artifacts, embeds the query batch, retrieves
-semantic and lexical candidates, then reranks them with a weighted blend of
-lexical score, semantic score, and a small title-match bonus.
-
-## Build artifacts (offline, not timed)
-
-Run once locally to create `artifacts/`. **Submit these files** in your repo; staff do not rebuild the index at grading time.
+To rebuild artifacts from scratch before evaluating:
 
 ```bash
 python scripts/build_index.py
+python scripts/eval_public.py
 ```
 
-Required artifact files:
+`scripts/build_index.py` is offline and not part of query-time grading. Query
+time is handled by `main.run()`, which loads the prebuilt artifacts and ranks the
+provided query batch.
+
+## Architecture Overview
+
+The final retriever is a four-channel hybrid system:
+
+- **Semantic channel**: `sentence-transformers/all-MiniLM-L6-v2` embeds raw
+  `entry_text(record)` at document level. The model's native truncation acts as
+  a Wikipedia lead-section extractor.
+- **Lexical channel**: BM25 over page-level posting lists, using alphanumeric
+  tokens, lightweight suffix variants, and selected high-value phrase tokens.
+- **Title channel**: IDF-weighted normalized overlap between query terms and
+  title terms.
+- **Popularity channel**: offline title-mention counts across the corpus,
+  log-normalized into `popularity_scores.npy` and used as a small prior.
+
+Offline indexing includes two Wikipedia-specific optimizations:
+
+- **Lead-section BM25 boost**: terms in the first 100 words receive a 5x term
+  frequency boost.
+- **Boilerplate filtering**: common Wikipedia structural terms such as
+  `references`, `external`, `links`, `category`, and related metadata tokens are
+  removed from BM25 artifacts.
+
+The final tuned runtime constants are locked in `retrieve.py`:
+
+```text
+BM25_K1 = 1.50
+BM25_B = 0.90
+semantic = 0.50
+lexical = 0.35
+coverage = 0.10
+title = 0.00
+popularity = 0.05
+```
+
+## Artifacts
+
+The required runtime artifacts are:
 
 ```text
 artifacts/index_vectors.npy
@@ -51,21 +87,14 @@ artifacts/lexicon.json
 artifacts/post_doc_ids.npy
 artifacts/post_tfs.npy
 artifacts/doc_lengths.npy
+artifacts/popularity_scores.npy
 ```
 
 `index_vectors.npy` stores one normalized MiniLM vector per page. The lexical
-files store page-level BM25 posting lists and document lengths.
+files store compact BM25 posting lists and document lengths. The popularity file
+is row-aligned with the page IDs in `index_meta.json`.
 
-## Public self-test
+## Experiments
 
-After building, verify a fresh run loads your submitted artifacts (no rebuild):
-
-```bash
-python scripts/eval_public.py
-```
-
-## Submit
-
-Public GitHub repo with this code and the required `artifacts/` directory. A
-fresh clone should be able to install requirements and run
-`python scripts/eval_public.py` without running `scripts/build_index.py`.
+Additional ablation utilities live in `experiments/`. They are not required for
+normal evaluation or submission.

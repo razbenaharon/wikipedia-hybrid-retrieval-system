@@ -26,6 +26,28 @@ LEXICON_NAME = "lexicon.json"
 POST_DOC_IDS_NAME = "post_doc_ids.npy"
 POST_TFS_NAME = "post_tfs.npy"
 DOC_LENGTHS_NAME = "doc_lengths.npy"
+POPULARITY_SCORES_NAME = "popularity_scores.npy"
+LEAD_WORDS = 100
+LEAD_TF_BOOST = 5
+WIKIPEDIA_META_STOPWORDS = {
+    "also",
+    "archive",
+    "archived",
+    "article",
+    "articles",
+    "categories",
+    "category",
+    "doi",
+    "external",
+    "isbn",
+    "link",
+    "links",
+    "main",
+    "reference",
+    "references",
+    "retrieved",
+    "see",
+}
 
 
 @dataclass(frozen=True)
@@ -41,6 +63,8 @@ def build_index(
     *,
     entries_dir: Optional[Path] = None,
     artifacts_dir: Optional[Path] = None,
+    lead_words: int = LEAD_WORDS,
+    lead_tf_boost: int = LEAD_TF_BOOST,
 ) -> Tuple[np.ndarray, List[int]]:
     """
     Embed full pages and persist page-level lexical artifacts.
@@ -56,27 +80,41 @@ def build_index(
     titles = [str(record.get("title", "")) for record in records]
 
     lexicon, post_doc_ids, post_tfs, doc_lengths, avg_doc_length = _build_lexical_index(
-        records
+        records,
+        lead_words=lead_words,
+        lead_tf_boost=lead_tf_boost,
     )
 
     np.save(out_dir / INDEX_VECTORS_NAME, vectors)
     np.save(out_dir / POST_DOC_IDS_NAME, post_doc_ids)
     np.save(out_dir / POST_TFS_NAME, post_tfs)
     np.save(out_dir / DOC_LENGTHS_NAME, doc_lengths)
+    popularity_scores = _build_popularity_scores(records)
+    np.save(out_dir / POPULARITY_SCORES_NAME, popularity_scores)
 
     meta = {
-        "artifact_version": 4,
+        "artifact_version": 6,
         "page_ids": page_ids,
         "titles": titles,
         "model": EMBEDDING_MODEL_NAME,
         "num_vectors": len(page_ids),
+        "semantic": {
+            "algorithm": "minilm_document_native_truncated",
+            "vectors": INDEX_VECTORS_NAME,
+        },
         "lexical": {
-            "algorithm": "bm25",
+            "algorithm": "bm25_lead_boost",
             "lexicon": LEXICON_NAME,
             "post_doc_ids": POST_DOC_IDS_NAME,
             "post_tfs": POST_TFS_NAME,
             "doc_lengths": DOC_LENGTHS_NAME,
             "avg_doc_length": avg_doc_length,
+            "lead_words": lead_words,
+            "lead_tf_boost": lead_tf_boost,
+        },
+        "popularity": {
+            "algorithm": "normalized_title_phrase_mentions",
+            "scores": POPULARITY_SCORES_NAME,
         },
     }
     (out_dir / INDEX_META_NAME).write_text(
@@ -90,6 +128,9 @@ def build_index(
 
 def _build_lexical_index(
     records: List[dict],
+    *,
+    lead_words: int = LEAD_WORDS,
+    lead_tf_boost: int = LEAD_TF_BOOST,
 ) -> Tuple[Dict[str, Tuple[int, int, float]], np.ndarray, np.ndarray, np.ndarray, float]:
     """Build compact BM25 posting-list artifacts."""
     num_docs = len(records)
@@ -97,8 +138,17 @@ def _build_lexical_index(
     doc_lengths = np.zeros(num_docs, dtype=np.float32)
 
     for doc_idx, record in enumerate(records):
-        tokens = tokenize_text(entry_text(record), expand=True)
+        text = entry_text(record)
+        tokens = _filter_wikipedia_meta_tokens(tokenize_text(text, expand=True))
         counts = Counter(tokens)
+        lead_text = " ".join(text.split()[:lead_words])
+        lead_tokens = _filter_wikipedia_meta_tokens(
+            tokenize_text(lead_text, expand=True)
+        )
+        lead_counts = Counter(lead_tokens)
+        for token, lead_tf in lead_counts.items():
+            counts[token] += (lead_tf_boost - 1) * lead_tf
+
         doc_lengths[doc_idx] = float(sum(counts.values()))
         for token, tf in counts.items():
             postings.setdefault(token, []).append((doc_idx, min(tf, 65535)))
@@ -126,13 +176,66 @@ def _build_lexical_index(
     )
 
 
+def _filter_wikipedia_meta_tokens(tokens: List[str]) -> List[str]:
+    """Drop common Wikipedia structure terms from BM25 artifacts."""
+    return [token for token in tokens if token not in WIKIPEDIA_META_STOPWORDS]
+
+
+def _build_popularity_scores(records: List[dict]) -> np.ndarray:
+    """Compute row-aligned title mention popularity scores from page content."""
+    title_candidates: dict[str, list[tuple[tuple[str, ...], tuple[int, ...]]]] = {}
+    title_to_doc_idxs: dict[tuple[str, ...], list[int]] = {}
+    for doc_idx, record in enumerate(records):
+        title_tokens = tuple(
+            tokenize_text(
+                str(record.get("title", "")),
+                expand=False,
+                include_bigrams=False,
+                include_char_ngrams=False,
+            )
+        )
+        if not title_tokens:
+            continue
+        title_to_doc_idxs.setdefault(title_tokens, []).append(doc_idx)
+
+    for title_tokens, doc_idxs in title_to_doc_idxs.items():
+        title_candidates.setdefault(title_tokens[0], []).append(
+            (title_tokens, tuple(doc_idxs))
+        )
+
+    counts = np.zeros(len(records), dtype=np.float32)
+    for source_doc_idx, record in enumerate(records):
+        content_tokens = tokenize_text(
+            str(record.get("content", "")),
+            expand=False,
+            include_bigrams=False,
+            include_char_ngrams=False,
+        )
+        for pos, token in enumerate(content_tokens):
+            for title_tokens, target_doc_idxs in title_candidates.get(token, ()):
+                end = pos + len(title_tokens)
+                if end > len(content_tokens):
+                    continue
+                if tuple(content_tokens[pos:end]) != title_tokens:
+                    continue
+                for target_doc_idx in target_doc_idxs:
+                    if target_doc_idx != source_doc_idx:
+                        counts[target_doc_idx] += 1.0
+
+    if counts.max(initial=0.0) <= 0.0:
+        return counts
+    log_counts = np.log1p(counts)
+    return (log_counts / log_counts.max()).astype(np.float32, copy=False)
+
+
 def load_index(
     artifacts_dir: Optional[Path] = None,
 ) -> Tuple[np.ndarray, List[int]]:
-    """Load precomputed vectors and page_id map from artifacts/."""
+    """Load precomputed document vectors and page_id map from artifacts/."""
     root = artifacts_dir or ARTIFACTS_DIR
-    vectors = np.load(root / INDEX_VECTORS_NAME)
     meta = json.loads((root / INDEX_META_NAME).read_text(encoding="utf-8"))
+    semantic_meta = meta.get("semantic", {})
+    vectors = np.load(root / semantic_meta.get("vectors", INDEX_VECTORS_NAME))
     page_ids = [int(x) for x in meta["page_ids"]]
     return vectors, page_ids
 

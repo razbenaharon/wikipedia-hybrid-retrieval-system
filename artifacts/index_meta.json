@@ -1,5 +1,5 @@
 {
-  "artifact_version": 4,
+  "artifact_version": 6,
   "page_ids": [
     1000,
     10000,
@@ -54154,12 +54154,22 @@
   ],
   "model": "sentence-transformers/all-MiniLM-L6-v2",
   "num_vectors": 27074,
+  "semantic": {
+    "algorithm": "minilm_document_native_truncated",
+    "vectors": "index_vectors.npy"
+  },
   "lexical": {
-    "algorithm": "bm25",
+    "algorithm": "bm25_lead_boost",
     "lexicon": "lexicon.json",
     "post_doc_ids": "post_doc_ids.npy",
     "post_tfs": "post_tfs.npy",
     "doc_lengths": "doc_lengths.npy",
-    "avg_doc_length": 1798.8695068359375
+    "avg_doc_length": 2068.222900390625,
+    "lead_words": 100,
+    "lead_tf_boost": 5
+  },
+  "popularity": {
+    "algorithm": "normalized_title_phrase_mentions",
+    "scores": "popularity_scores.npy"
   }
 }
