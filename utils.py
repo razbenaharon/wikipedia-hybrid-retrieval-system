@@ -18,6 +18,8 @@ K_EVAL = 10
 TOKEN_RE = re.compile(r"[a-z0-9]+")
 CHAR_NGRAM_PREFIXES = ("ng3:", "ng4:")
 INCLUDE_CHAR_NGRAMS = False
+USE_STEMMING = True
+_STEMMER = None
 STOPWORDS = {
     "a",
     "about",
@@ -302,6 +304,18 @@ def token_variants(token: str) -> List[str]:
     return deduped
 
 
+def maybe_stem(token: str) -> str:
+    """Apply optional English stemming behind USE_STEMMING."""
+    global _STEMMER
+    if not USE_STEMMING:
+        return token
+    if _STEMMER is None:
+        from nltk.stem import SnowballStemmer
+
+        _STEMMER = SnowballStemmer("english")
+    return _STEMMER.stem(token)
+
+
 def char_ngrams(token: str) -> List[str]:
     """Return prefixed character 3-grams and 4-grams for fuzzy matching."""
     if not (len(token) > 5 or any(ch.isdigit() for ch in token)):
@@ -338,11 +352,12 @@ def tokenize_text(
     Optional prefixed character n-grams improve matching for synthetic names,
     numeric facts, and small typo variations.
     """
-    base_tokens = [
-        token
+    raw_tokens = [
+        maybe_stem(token)
         for token in TOKEN_RE.findall(text.lower())
         if len(token) > 1 and token not in STOPWORDS
     ]
+    base_tokens = [token for token in raw_tokens if len(token) > 1]
 
     tokens: List[str] = []
     for token in base_tokens:

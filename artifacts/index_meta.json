@@ -54160,16 +54160,36 @@
   },
   "lexical": {
     "algorithm": "bm25_lead_boost",
+    "use_stemming": true,
+    "use_bm25f": true,
     "lexicon": "lexicon.json",
     "post_doc_ids": "post_doc_ids.npy",
     "post_tfs": "post_tfs.npy",
     "doc_lengths": "doc_lengths.npy",
-    "avg_doc_length": 2068.222900390625,
-    "lead_words": 100,
-    "lead_tf_boost": 5
+    "avg_doc_length": 1646.8031005859375,
+    "lead_words": 200,
+    "lead_tf_boost": 3
   },
   "popularity": {
     "algorithm": "normalized_title_phrase_mentions",
     "scores": "popularity_scores.npy"
+  },
+  "bm25f": {
+    "algorithm": "bm25f_lead_body",
+    "lead_words": 200,
+    "lead": {
+      "lexicon": "bm25f_lead_lexicon.json",
+      "post_doc_ids": "bm25f_lead_post_doc_ids.npy",
+      "post_tfs": "bm25f_lead_post_tfs.npy",
+      "doc_lengths": "bm25f_lead_doc_lengths.npy",
+      "avg_doc_length": 108.18792724609375
+    },
+    "body": {
+      "lexicon": "bm25f_body_lexicon.json",
+      "post_doc_ids": "bm25f_body_post_doc_ids.npy",
+      "post_tfs": "bm25f_body_post_tfs.npy",
+      "doc_lengths": "bm25f_body_doc_lengths.npy",
+      "avg_doc_length": 1322.2391357421875
+    }
   }
 }
