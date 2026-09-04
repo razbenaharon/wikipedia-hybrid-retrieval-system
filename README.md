@@ -1,3 +1,11 @@
+> [!NOTE]
+> **This repository has moved and is archived (read-only).**
+>
+> The project now lives in
+> **[razbenaharon/academic-projects/wikipedia-hybrid-retrieval](https://github.com/razbenaharon/academic-projects/tree/main/wikipedia-hybrid-retrieval)**,
+> alongside the rest of my Technion coursework. Continue there.
+
+
 # Section B - Wikipedia Retrieval
 
 Video presentation: [Google Drive](https://drive.google.com/file/d/1OTeE8505G-K7uFsKdHm5gg1vetxAvULA/view?usp=sharing)
